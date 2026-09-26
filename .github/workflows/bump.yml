@@ -1,0 +1,213 @@
+# Keeps Formula/create-dotfiles.rb at the latest version on npm.
+#
+# create-dotfiles is released from github.com/thilllon/create-dotfiles by its release.yml, with
+# npm Trusted Publishing, and npm is the source of truth for its version. Nothing there can push
+# here (that would need a cross-repository token), so this tap polls npm instead and needs only
+# its own GITHUB_TOKEN.
+#
+# A new version reaches main only after every check below has passed:
+#   check   the tarball's npm provenance says it was built by create-dotfiles' release.yml on
+#           main and matches the signed digest; the formula is rewritten with its url and sha256
+#   verify  brew style, audit, install --build-from-source and test, on macOS and Linux, run
+#           against exactly the rewritten file from `check`
+#   commit  that same file is committed and pushed to main
+#
+# The commit is pushed from the commit the run started on. If main moved in the meantime the
+# push is rejected and the next scheduled run starts over, so a concurrent edit to the formula
+# is never overwritten.
+
+name: Bump create-dotfiles
+
+on:
+  schedule:
+    # Every three hours. A version older than the interval is picked up by the next run.
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -xeuo pipefail {0}
+
+env:
+  PACKAGE: create-dotfiles
+  FORMULA_PATH: Formula/create-dotfiles.rb
+  # The only publisher accepted: create-dotfiles' release.yml, running on main.
+  SOURCE_REPOSITORY: thilllon/create-dotfiles
+  SOURCE_WORKFLOW: thilllon/create-dotfiles/.github/workflows/release.yml
+  SOURCE_REF: refs/heads/main
+
+jobs:
+  check:
+    # The commit job pushes to main, so a run dispatched on another branch must not get that far:
+    # it would fast-forward main to that branch's unreviewed commits.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.compare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the formula with npm
+        id: compare
+        run: |
+          # A run that waited behind another in the concurrency queue still starts from the commit
+          # it was queued on. If main has moved since (usually because the earlier run already
+          # pushed this bump), its push would be rejected; leave the work to the next run.
+          git fetch --quiet --depth=1 origin main
+          if [[ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::notice::main has moved since this run was queued; the next run will pick up any new version."
+            exit 0
+          fi
+          current=$(sed -nE "s|^  url \"https://registry\.npmjs\.org/$PACKAGE/-/$PACKAGE-([^\"]+)\.tgz\"$|\1|p" "$FORMULA_PATH")
+          latest=$(curl -fsSL --retry 3 "https://registry.npmjs.org/$PACKAGE/latest" | jq -r .version)
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$current" =~ $semver ]]; then
+            echo "::error::Could not read a version from the url in $FORMULA_PATH (got '$current')."
+            exit 1
+          fi
+          if ! [[ "$latest" =~ $semver ]]; then
+            echo "::error::npm's latest $PACKAGE is '$latest', which is not a plain x.y.z version."
+            exit 1
+          fi
+          newest=$(printf '%s\n' "$current" "$latest" | sort -V | tail -n 1)
+          if [[ "$latest" == "$current" || "$newest" != "$latest" ]]; then
+            echo "The formula has $current and npm's latest is $latest: nothing to do."
+            exit 0
+          fi
+          echo "The formula has $current; npm has $latest."
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the tarball's provenance
+        if: steps.compare.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.compare.outputs.version }}
+        run: |
+          curl -fsSL --retry 3 -o package.tgz "https://registry.npmjs.org/$PACKAGE/-/$PACKAGE-$VERSION.tgz"
+          curl -fsSL --retry 3 "https://registry.npmjs.org/-/npm/v1/attestations/$PACKAGE@$VERSION" |
+            jq -c '.attestations[] | select(.predicateType == "https://slsa.dev/provenance/v1") | .bundle' > provenance.jsonl
+          if [[ ! -s provenance.jsonl ]]; then
+            echo "::error::npm serves no SLSA provenance for $PACKAGE@$VERSION, so it cannot be shown to come from $SOURCE_WORKFLOW."
+            exit 1
+          fi
+          # Checks the Sigstore signature, that the signing certificate's identity is exactly
+          # release.yml on main in the source repository (case-sensitive, no prefix match), and that
+          # the signed sha512 digest is this tarball's.
+          gh attestation verify package.tgz --bundle provenance.jsonl --digest-alg sha512 \
+            --repo "$SOURCE_REPOSITORY" --source-ref "$SOURCE_REF" \
+            --cert-identity "https://github.com/$SOURCE_WORKFLOW@$SOURCE_REF"
+          packaged=$(tar -xzOf package.tgz package/package.json | jq -r .version)
+          if [[ "$packaged" != "$VERSION" ]]; then
+            echo "::error::The $PACKAGE@$VERSION tarball contains package.json version '$packaged'."
+            exit 1
+          fi
+
+      - name: Rewrite url and sha256
+        if: steps.compare.outputs.version != ''
+        env:
+          VERSION: ${{ steps.compare.outputs.version }}
+        run: |
+          url="https://registry.npmjs.org/$PACKAGE/-/$PACKAGE-$VERSION.tgz"
+          sha256=$(sha256sum package.tgz | cut -d ' ' -f 1)
+          sed -i -E \
+            -e "s|^  url \"https://registry\.npmjs\.org/$PACKAGE/-/$PACKAGE-[^\"]+\.tgz\"$|  url \"$url\"|" \
+            -e "s|^  sha256 \"[0-9a-f]{64}\"$|  sha256 \"$sha256\"|" \
+            "$FORMULA_PATH"
+          # Exactly one line each, or the formula no longer has the shape this workflow expects.
+          [[ $(grep -cFx "  url \"$url\"" "$FORMULA_PATH") == 1 ]]
+          [[ $(grep -cFx "  sha256 \"$sha256\"" "$FORMULA_PATH") == 1 ]]
+          git diff
+
+      - name: Hand the rewritten formula to the next jobs
+        if: steps.compare.outputs.version != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: formula
+          path: ${{ env.FORMULA_PATH }}
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    needs: check
+    if: needs.check.outputs.version != ''
+    strategy:
+      matrix:
+        os: [macos-26, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      # Checks out this tap and registers the checkout as the tap, so the formula below is the
+      # one brew loads.
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@848c272c7bfe984a197bd4d16383f4c106ec61e6 # 2026.09.21.1
+        with:
+          # The released Homebrew that users run, rather than the development branch a tap gets
+          # by default.
+          stable: true
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: formula
+          path: Formula
+
+      - name: Style and audit
+        env:
+          TAP_NAME: ${{ steps.set-up-homebrew.outputs.tap-name }}
+        run: |
+          git diff
+          brew style "$TAP_NAME/$PACKAGE"
+          brew audit --strict --online --formula "$TAP_NAME/$PACKAGE"
+
+      - name: Install and test
+        env:
+          TAP_NAME: ${{ steps.set-up-homebrew.outputs.tap-name }}
+        run: |
+          brew install --build-from-source "$TAP_NAME/$PACKAGE"
+          brew test --verbose "$TAP_NAME/$PACKAGE"
+          [[ "$("$(brew --prefix)/bin/$PACKAGE" --version)" == "$PACKAGE/$VERSION "* ]]
+
+  commit:
+    needs: [check, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: formula
+          path: Formula
+
+      - name: Commit and push to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FORMULA_PATH"
+          git commit -m "$PACKAGE $VERSION"
+          git show --stat HEAD
+          git push origin HEAD:main
