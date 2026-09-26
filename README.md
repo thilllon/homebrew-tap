@@ -8,13 +8,7 @@ Homebrew formulae by [@thilllon](https://github.com/thilllon).
 
 ## Install
 
-```shell
-brew install thilllon/tap/create-dotfiles
-```
-
-Homebrew only loads formulae from taps you trust. Naming the formula in full, as above, trusts
-that formula for you. If you would rather `brew tap` first and use the short name, trust the tap
-once:
+Tap and trust once per machine, then install by name:
 
 ```shell
 brew tap thilllon/tap
@@ -22,11 +16,16 @@ brew trust thilllon/tap
 brew install create-dotfiles
 ```
 
+After that, `brew install create-dotfiles` and `brew upgrade create-dotfiles` work by name.
+Homebrew 6 and later load formulae only from taps you trust, which is what `brew trust` is for;
+`brew tap` alone is not enough. `brew install thilllon/tap/create-dotfiles` does the same in one
+command, trusting just this formula.
+
 In a `Brewfile`:
 
 ```ruby
-tap "thilllon/tap"
-brew "thilllon/tap/create-dotfiles", trusted: true
+tap "thilllon/tap", trusted: true
+brew "create-dotfiles"
 ```
 
 ## How updates arrive
