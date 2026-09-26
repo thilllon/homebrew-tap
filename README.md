@@ -28,6 +28,35 @@ tap "thilllon/tap", trusted: true
 brew "create-dotfiles"
 ```
 
+## Use
+
+The formula installs the `create-dotfiles` command:
+
+```shell
+create-dotfiles                              # interactive
+create-dotfiles --auto                       # no prompts, defaults
+create-dotfiles --auto --dry-run             # show the plan, write nothing
+create-dotfiles --format zip --encrypt-zip   # password-protected zip
+create-dotfiles restore                      # put the newest collection back
+create-dotfiles --help                       # every flag and rule
+```
+
+The [create-dotfiles README](https://github.com/thilllon/create-dotfiles#readme) has the details;
+its `npx create-dotfiles …` examples work the same as `create-dotfiles …` here.
+
+Update (`brew upgrade` alone checks for new versions once a day):
+
+```shell
+brew update && brew upgrade create-dotfiles
+```
+
+Remove (the second line only if you want the tap gone too):
+
+```shell
+brew uninstall create-dotfiles
+brew untap thilllon/tap && brew untrust thilllon/tap
+```
+
 ## How updates arrive
 
 `create-dotfiles` is released to npm from its own repository, and npm is the source of truth for
