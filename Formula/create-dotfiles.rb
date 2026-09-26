@@ -1,8 +1,8 @@
 class CreateDotfiles < Formula
   desc "Collect your dotfiles into a timestamped folder, zip or tar.gz"
   homepage "https://github.com/thilllon/create-dotfiles"
-  url "https://registry.npmjs.org/create-dotfiles/-/create-dotfiles-2.3.2.tgz"
-  sha256 "aad7acc14486f390b509f78d26cfe08bf3655b8edd6f8de07c920828b8bfae30"
+  url "https://registry.npmjs.org/create-dotfiles/-/create-dotfiles-2.3.3.tgz"
+  sha256 "d7ca573e9b7f476a3c4aaa4be25055b5ba1f56a86290456b414145e61f9bd2c0"
   license "MIT"
 
   depends_on "node"
