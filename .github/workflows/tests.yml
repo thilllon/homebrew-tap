@@ -52,6 +52,17 @@ jobs:
       - run: brew test-bot --only-formulae
         if: github.event_name == 'pull_request'
 
+      # This tap ships no bottles. For a PR that changes an existing formula (rather than adding
+      # one), test-bot therefore reports a failed `brew install`, `brew linkage --test` or
+      # `brew test` as "ignored" and still exits 0. Treat those as failures.
+      - name: Fail on failures test-bot ignored
+        if: github.event_name == 'pull_request'
+        run: |
+          cat steps_output.txt
+          if grep -qE 'failed steps? ignored!' steps_output.txt; then
+            exit 1
+          fi
+
       - name: Upload bottles as artifact
         if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

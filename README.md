@@ -43,9 +43,22 @@ dispatch). When a newer version is out, it:
    `brew test` on macOS and Linux;
 4. commits the formula to `main` only if all of that passed.
 
-Nothing needs a token beyond the workflow's own `GITHUB_TOKEN`. Formulae are built from source
-at install time (there are no bottles); that takes a few seconds, as the package has no runtime
-dependencies besides Node.
+GitHub disables scheduled workflows in a public repository after 60 days without activity. Bump
+commits count as activity, so this only happens after a long gap between releases, and
+create-dotfiles' release workflow checks `bump.yml` after every release. If it is not active, the
+release run fails and opens an issue in create-dotfiles that mentions the owner. To recover:
+
+```shell
+gh workflow enable bump.yml -R thilllon/homebrew-tap
+gh workflow run bump.yml -R thilllon/homebrew-tap
+```
+
+Nothing needs a token beyond the workflow's own `GITHUB_TOKEN`.
+
+There are no bottles, so `brew install` builds formulae from source. For `create-dotfiles` that is
+one `npm install` of a package with no runtime dependencies, and it takes seconds. Like any source
+build, it needs the developer tools Homebrew already asks for: the Command Line Tools on macOS, or
+a compiler toolchain on Linux (`build-essential` or equivalent).
 
 ## Documentation
 
